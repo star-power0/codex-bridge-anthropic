@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+.tmp-electron-packager/
+
+# Test scratch directories
+.tmp/
+.tmp-updates-*/
+.tmp-installed-cleanup-*/
+.tmp-installed-legacy-cleanup-*/
+.tmp-release-*/
+
+# Build outputs
+dist/
+build/
+release/
+dist-artifacts/
+coverage/
+target/
+src-tauri/target/
+
+# Local runtime files
+data/
+state/
+logs/
+*.log
+*.pid
+model-catalog.json
+
+# Local secrets and user config
+.env
+.env.*
+!.env.example
+config/router.config.json
+config/secrets.local.json
+config/.transactions/
+*.pem
+*.key
+
+# Third-party research checkouts
+research/
+
+# Internal planning and imported scratch notes
+docs/imported/
+docs/superpowers/
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+
+# Patch process backup (pre-fork originals, not for distribution)
+.bridge-patch-backup/

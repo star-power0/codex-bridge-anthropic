@@ -1,0 +1,106 @@
+{
+  "mode": "all_api",
+  "host": "127.0.0.1",
+  "port": 15722,
+  "authToken": "sk-local-codex-router",
+  "clientAuth": {
+    "allowOpenAiBearer": true
+  },
+  "defaultModel": "gpt-5.5",
+  "catalog": {
+    "contextWindow": 258400,
+    "effectiveContextWindowPercent": 95,
+    "autoCompactPercent": 80
+  },
+  "smartRouting": {
+    "autoSelectModel": false,
+    "autoFailover": false
+  },
+  "duplicateRequestProtection": false,
+  "models": [
+    {
+      "id": "gpt-5.5",
+      "displayName": "OpenAI GPT-4.1",
+      "description": "OpenAI GPT-4.1 via OpenAI API.",
+      "api": "responses",
+      "baseUrl": "https://api.openai.com/v1",
+      "model": "gpt-4.1",
+      "authMode": "api_key",
+      "apiKeyEnv": "OPENAI_API_KEY",
+      "contextWindow": 1047576,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "priority": 0
+    },
+    {
+      "id": "gpt-5.4",
+      "displayName": "OpenAI GPT-4.1 Mini",
+      "description": "OpenAI GPT-4.1 Mini via OpenAI API.",
+      "api": "responses",
+      "baseUrl": "https://api.openai.com/v1",
+      "model": "gpt-4.1-mini",
+      "authMode": "api_key",
+      "apiKeyEnv": "OPENAI_API_KEY",
+      "contextWindow": 1047576,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "priority": 1
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "displayName": "DeepSeek V4 Pro",
+      "description": "DeepSeek V4 Pro through Chat Completions conversion.",
+      "api": "chat_completions",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "model": "deepseek-v4-pro",
+      "authMode": "api_key",
+      "apiKeyEnv": "DEEPSEEK_API_KEY",
+      "contextWindow": 1000000,
+      "priority": 2,
+      "dropParams": [
+        "response_format",
+        "parallel_tool_calls"
+      ]
+    },
+    {
+      "id": "gpt-5.3-codex",
+      "displayName": "DeepSeek V4 Flash",
+      "description": "DeepSeek V4 Flash through Chat Completions conversion.",
+      "api": "chat_completions",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "model": "deepseek-v4-flash",
+      "authMode": "api_key",
+      "apiKeyEnv": "DEEPSEEK_API_KEY",
+      "contextWindow": 1000000,
+      "priority": 3,
+      "dropParams": [
+        "response_format",
+        "parallel_tool_calls"
+      ]
+    },
+    {
+      "id": "gpt-5.2",
+      "displayName": "Kimi K2.7 Code",
+      "description": "Kimi K2.7 Code through Chat Completions conversion.",
+      "api": "chat_completions",
+      "baseUrl": "https://api.moonshot.cn/v1",
+      "model": "kimi-k2.7-code",
+      "authMode": "api_key",
+      "apiKeyEnv": "MOONSHOT_API_KEY",
+      "contextWindow": 258400,
+      "priority": 4,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "dropParams": [
+        "response_format",
+        "parallel_tool_calls"
+      ]
+    }
+  ]
+}
