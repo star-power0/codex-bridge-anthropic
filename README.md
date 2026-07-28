@@ -4,6 +4,64 @@
 
 ---
 
+## 已经装过 0.3.13 版本，想用这个 fork 怎么办
+
+这个仓库发布的是**修改后的源码**，不是打包好的安装程序。如果你已经装了官方 CodexBridge 0.3.13（或来源类似的便携版/安装版），有两种方式升级：
+
+### 方式一：用 install.ps1 自动安装（推荐）
+
+1. 完全退出 CodexBridge（包括后台托盘图标）。
+2. 克隆或下载本仓库到本地任意目录。
+3. 打开 PowerShell，cd 到本仓库根目录，执行：
+
+   ```powershell
+   .\install.ps1
+   ```
+
+   脚本会自动在常见安装路径下查找 CodexBridge，找到后会：
+   - 把即将被覆盖的原始文件备份到安装目录下的 `.fork-backup-<时间戳>` 文件夹
+   - 用本 fork 修改后的文件覆盖安装目录里对应的文件
+
+   如果脚本没找到安装目录（比如你用了自定义路径或便携版），手动指定：
+
+   ```powershell
+   .\install.ps1 -InstallDir "你的安装目录\resources\app"
+   ```
+
+   判断依据：这个目录下应该能看到 `package.json`、`src\`、`desktop\` 这些文件/文件夹。
+
+4. 重新启动 CodexBridge。
+
+### 方式二：手动复制文件
+
+如果不想跑脚本，也可以手动把本仓库里的这些文件复制到安装目录的同名路径下（会覆盖原文件，建议先自行备份）：
+
+```
+src/claude-messages.js        (新文件)
+src/upstream.js
+src/adapter-profile.js
+src/config.js
+src/route-snapshot.js
+desktop/settings.mjs
+desktop/config-import-validation.mjs
+desktop/main.cjs
+desktop/preload.cjs
+desktop/renderer/app.js
+desktop/renderer/index.html
+```
+
+复制完成后重启 CodexBridge。
+
+### 回滚
+
+如果用了 install.ps1，回滚很简单：把它生成的 `.fork-backup-<时间戳>` 文件夹里的文件复制回原路径即可。
+
+### 注意事项
+
+- 本 fork 基于 **0.3.13** 开发，如果你的版本不是 0.3.13，文件结构或函数签名可能有差异，直接覆盖有风险，建议先确认版本一致。
+- 如果你是从源码自己跑（`npm run desktop`），直接 `git pull` 或者把改动的文件覆盖到你自己的工作目录即可，不需要 install.ps1。
+
+
 ## 这个 fork 改了什么
 
 以下是相对上游 0.3.13 版本的全部改动，按实际解决的问题分组描述。
