@@ -152,6 +152,30 @@ desktop/renderer/index.html
 
 ---
 
+### 7. 图片桥接自动压缩 + 跨模型图片历史裁剪
+
+**背景：** 上游模型（尤其是部分 Claude 中转）对图片格式、体积、张数敏感：WebP 经常不被接受，单图过大会拖慢请求甚至被拒绝，长对话里反复携带大量历史图片的 Base64 数据会让请求体迅速膨胀。上游版本没有对这些情况做任何预处理。
+
+**新增（`src/responses-to-chat.js` + `src/claude-messages.js`）：**
+
+- **自动格式转换与压缩**：当输入图片是 WebP，或解码后原始数据超过 `750,000` 字节时，Windows 上的桥接会自动：
+  1. 写入系统临时目录
+  2. 调用 Windows 图像解码组件读取
+  3. 转码为 JPEG，质量 `78`（`CHAT_IMAGE_JPEG_QUALITY`）
+  4. 最长边缩放到不超过 `1600px`（`MAX_CHAT_IMAGE_SIDE`）
+  5. 转换结果作为图片附件发给上游，临时文件用后即删
+  6. 不修改、不删除原始图片文件
+- **跨模型中性历史 + 图片保留窗口**：会话历史以协议无关的中性结构保存（文本、图片、标准 `tool_calls`/`tool_result`），使同一对话可以在 GPT/Chat 协议与 Anthropic Messages 协议之间来回切换而不丢失工具调用链路。
+  - 发给上游的请求中，只保留最近 `4` 条含图片消息的图片数据（`MAX_CLAUDE_IMAGE_MESSAGES` / 对应 chat 侧常量），更早的图片消息只保留文字占位和此前的文字结论，避免每轮请求重复携带大量历史图片数据。
+  - GPT 历史切到 Claude：历史 `tool_calls` 映射为 Claude 的 `tool_use`，工具结果映射为 `tool_result`。
+  - Claude 历史切到 GPT：Claude 的 `tool_use` 保存为标准 `tool_calls`，供后续 GPT 路由继续处理对应工具结果。
+  - 若上游明确拒绝图片，自动降级为不带图片的文字占位重试。
+- **新增验证脚本 `scripts/verify-claude-messages-native.mjs`**：构造五条 GPT 图片历史加一条新图片的场景，验证原生 Claude 请求只携带最近四条图片消息，且历史工具调用/工具结果在协议间正确互转。
+
+细节说明见 `docs/image-input-notes-2026-07-28.md`。
+
+---
+
 ### 7. Skills / MCP 离线磁盘兜底扫描
 
 **问题：** 系统 `PATH` 里找不到 `codex` CLI 时，`codex app-server` 返回 `cli_not_found`，GUI 的 Skills 和 MCP 面板直接显示"无法读取"，即使 `~/.codex/skills/` 里已装了很多 skill。
