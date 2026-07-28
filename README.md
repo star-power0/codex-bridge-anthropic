@@ -1,67 +1,113 @@
-# CodexBridge (Claude/Anthropic 协议兼容 Fork)
+# codex-bridge-anthropic
 
-本仓库是 [wangzhezbz/codex-bridge](https://github.com/wangzhezbz/codex-bridge) 的一个 fork，基于其 `0.3.13` 发行版源码，在此基础上新增了 **Anthropic `/v1/messages` 原生协议支持**（主要用于 Claude 系模型经第三方中转站接入时的稳定性问题），以及若干桌面端可用性修复。
-
-原项目是本地多模型网关和桌面管理器，让 Codex / ChatGPT Desktop 可以通过一个本地 Router 同时使用 GPT、DeepSeek、Kimi、Claude 等 OpenAI-compatible 或 Anthropic-compatible 模型。原项目的完整介绍见下方 Upstream 部分或访问原仓库。
-
-## 这是什么，为什么 fork
-
-上游 0.3.13 版本的 Claude 系模型走的是 OpenAI-compatible 的 `chat/completions` 转换路径。实测发现部分中转站（如本例中的 Baiyuan）在这条路径上会返回 `503 No available accounts`，但同一个 Key 走 Anthropic 原生的 `/v1/messages` 协议是正常的。也就是说问题出在协议路径，不是 Key 失效。
-
-于是本 fork 把 Anthropic Messages 协议从"隐藏 fallback"提升为独立的一等协议（`anthropic_messages`），和已有的 `responses` / `chat_completions` 并列。
-
-## 相对上游的改动
-
-### 1. Anthropic Messages 协议支持（核心改动）
-
-- 新增 `src/claude-messages.js`（约 1100 行）：负责 OpenAI chat 格式 <-> Anthropic Messages 格式的双向转换，包括流式 SSE 解析、工具调用（tool use）映射、历史消息重建等。
-- `src/upstream.js`：新增 `proxyAnthropicMessages()` 入口，`handleResponsesRequest` 按路由的 `api` 字段分发到该协议；保留旧的 chat_completions 兜底路径。
-- `src/adapter-profile.js`：为 `anthropic_messages` 协议单独定义工具调用轮次上限、参数丢弃规则（如 `response_format`、`parallel_tool_calls` 等 Anthropic 不支持的字段会被自动过滤）。
-- `src/config.js`：模型配置的 `api` 字段允许取值新增 `anthropic_messages`。
-- `src/route-snapshot.js`：路由快照/诊断信息接受该协议类型。
-
-### 2. 桌面端（`desktop/`）配套修复
-
-- **Provider 重命名同步**：重命名一个 Provider 后，其下所有模型卡片、分组标题、简称前缀会同步更新，不再遗留旧名字。
-- **删除 Provider 功能**：自定义 Provider 编辑卡片新增"删除供应商"按钮（带确认弹窗），会级联清理其下的模型和引用。
-- **非 ASCII Provider ID 冲突修复**：中文/中英混合 Provider 名称（如"百元kiro"和"瓦片kiro"）此前会因为 slug 化时中文被剥离，导致生成同一个 Provider ID 而互相覆盖。修复后基于完整名称哈希生成唯一 ID。
-- **自定义模型 Provider 归属修复**：从已有 Provider 卡片入口新增模型时，如果用户改写了 Provider 名称或 Base URL，会正确创建新 Provider 而不是强行归并到原 Provider。
-- **Context Window 快捷预设**：为所有 Context Window 输入框增加快捷按钮（64K / 128K / 256K / 500K / 1M / 2M）。
-- **Gateway 502/503 稳定性增强**：针对第三方中转站瞬时连接失败增加自动重试。
-- **Skills / MCP 离线兜底扫描**：当系统 PATH 中找不到 `codex` CLI 导致 `codex app-server` 不可用时，直接扫描 `~/.codex/skills/` 磁盘目录显示已安装的 Skills/MCP，而不是显示"无法读取"。
-
-以上改动均在真实环境下人工验证过（详见改动过程记录，未收录进本仓库的调试脚本已清理）。
-
-## 快速开始
-
-安装、配置、启动方式与上游一致，参见下方 Upstream README 内容，或直接查看 `docs/` 目录下的详细文档。
-
-关键差异：如果你的第三方 Claude 中转站也出现"账号池为空/503"但 Key 本身有效的情况，可以在自定义模型里把协议（`api`）设置为 `anthropic_messages`，走 Anthropic 原生协议而不是 chat_completions 转换路径。
-
-## 致谢 / Upstream
-
-本项目基于 [wangzhezbz/codex-bridge](https://github.com/wangzhezbz/codex-bridge)（MIT License）修改。原作者保留其所有权利，本仓库仅为个人使用场景下的功能扩展 fork，非官方发布，不代表上游项目立场。
-
-原始 License 见 `LICENSE` 文件（保留上游版权声明）。
+> **基于 [wangzhezbz/codex-bridge](https://github.com/wangzhezbz/codex-bridge) v0.3.13 的个人 fork，在上游基础上新增了多项功能修复。**
 
 ---
 
-## Upstream README（原始说明，供参考）
+## 这个 fork 改了什么
 
-> 以下内容为上游项目原始 README，部分内容可能与本 fork 的实际行为略有差异（例如协议支持已扩展为三种）。
+以下是相对上游 0.3.13 版本的全部改动，按实际解决的问题分组描述。
 
-# CodexBridge
+---
 
-Local multi-model gateway and desktop manager for Codex.
+### 1. Anthropic `/v1/messages` 原生协议支持（核心新功能）
 
-Codex 多模型本地网关与桌面管理器。
+**背景：** 部分第三方 Claude 中转站在 OpenAI-compatible 的 `/v1/chat/completions` 路径上会返回 `503 No available accounts`，但同一个 Key 走 Anthropic 原生的 `POST /v1/messages` 是完全正常的。问题出在协议路径的选择，不是 Key 失效。
 
-CodexBridge lets Codex use GPT, DeepSeek, Kimi, and more OpenAI-compatible models from one local router and one model picker.
+上游版本只有隐式的 chat_completions fallback，没有真正走原生 Anthropic 协议的能力。本 fork 把 `anthropic_messages` 提升为与 `responses` / `chat_completions` 并列的第一等协议。
 
-CodexBridge 让 Codex 通过一个本地 Router 和一个模型栏同时使用 GPT、DeepSeek、Kimi 以及更多 OpenAI-compatible 模型。
+**涉及文件：**
 
-详见原仓库 [wangzhezbz/codex-bridge](https://github.com/wangzhezbz/codex-bridge) 的完整 README，包含下载链接、计费模式、Codex 配置示例、故障排查等内容。本 fork 未修改这些通用使用说明，为避免重复冗余，此处不再复制全文，请以上游仓库或 `docs/` 目录为准。
+- **新增 `src/claude-messages.js`**（约 1100 行，全新文件）
+  - OpenAI chat payload → Anthropic Messages 请求格式完整转换
+  - Anthropic SSE 流式响应 → OpenAI chat.completion 格式完整转换
+  - tool_use 工具调用双向映射
+  - 图片拒绝时自动去图重试
+  - 历史消息重建（assistant/user 角色正确处理）
+
+- **`src/upstream.js`**（新增约 427 行）
+  - 新增 `proxyAnthropicMessages()` 专用入口
+  - `handleResponsesRequest` 按路由 `api` 字段分发到该协议
+  - 保留 chat_completions 兜底，不影响 GPT 系模型
+
+- **`src/adapter-profile.js`**
+  - `anthropic_messages` 协议工具调用轮次独立配置（默认 2 轮）
+  - 自动过滤 Anthropic 不支持的参数：`response_format`、`parallel_tool_calls`、`logit_bias`、`n`、`user`
+  - 新增 `isClaudeRoute()`，通过 provider/model 名称模糊识别 Claude 系路由
+
+- **`src/config.js`** — `api` 字段合法值新增 `anthropic_messages`
+- **`src/route-snapshot.js`** — 路由诊断接口接受该协议类型
+- **`desktop/settings.mjs`** — 自定义模型归一化保留该协议；Claude 远程模型自动选用该协议；配置导入支持该协议
+- **`desktop/renderer/index.html` + `desktop/renderer/app.js`** — UI 协议下拉框新增该选项
+
+---
+
+### 2. 自定义 Provider 作用域归属 Bug 修复
+
+**问题：** 从某个现有 Provider 的卡片入口点击"添加模型"，如果用户改写了 Provider 名称或 Base URL，期望新建一个 Provider，但代码会忽略用户输入，把新模型强行归并到原来那个 Provider 下面。
+
+**修复（`desktop/renderer/app.js`）：**
+- `customModelFormPayload()` 和 `customProviderPayload()` 检测 `customProviderName` 和 `customBaseUrl`
+- 若用户填写的名称或地址与 `scopedCustomProviderId` 不一致，自动创建新的 `custom-<name>` Provider，而不是强行归并
+
+---
+
+### 3. Provider 重命名同步 + 删除 Provider 功能
+
+**问题 1：** 把 Provider 重命名后，该 Provider 下所有模型的 `providerName`、顶部标签卡、分组标题、模型卡片简称前缀都不会跟着更新，残留旧名字。
+
+**修复（`desktop/settings.mjs`）：**
+- `providers:save`、`customModel:save`、`applyProviderSettingsToModel`、`applyProviderOverride` 加入重命名同步逻辑
+- 改名时下属模型的 `shortName`、`providerName`、`displayName` 前缀统一联动更新
+- 修复 `applyProviderOverride` 中 `shortName` 的 fallback 优先级，顶部标签卡正确显示 `override.name`
+
+**问题 2：** 没有删除自定义 Provider 的功能，只能逐个删模型。
+
+**新增（`desktop/settings.mjs` + `desktop/main.cjs` + `desktop/preload.cjs` + `desktop/renderer/app.js`）：**
+- 新增 `providers:remove` 事件及 IPC 绑定，级联清理下属模型、选择列表、provider-overrides 记录
+- Provider 编辑卡片新增红色"删除供应商"按钮，带确认弹窗
+
+---
+
+### 4. Context Window 快捷预设按钮
+
+**改动：** 在以下三处 Context Window 输入框旁新增快捷按钮（`64K` / `128K` / `256K` / `500K` / `1M` / `2M`）：
+1. 新增/编辑自定义模型表单（`desktop/renderer/index.html`）
+2. 模型目录页的内联上下文窗口控件（`desktop/renderer/app.js`）
+3. 模型能力覆盖面板（`desktop/renderer/app.js`）
+
+---
+
+### 5. 中文 / 非 ASCII Provider ID 冲突修复
+
+**问题：** Provider 名称为中文或中英混合时（如"百元kiro"和"瓦片kiro"），`slugify` 用 `/[^a-z0-9]+/g` 把中文全部剥离，导致两个不同的 Provider 被分配到相同的 ID `custom-kiro`，后者静默覆盖前者。
+
+**修复（`desktop/settings.mjs`）：** slug 生成时引入中文字符的哈希摘要，保证唯一 ID。
+
+---
+
+### 6. Gateway 502/503 稳定性增强
+
+**问题：** 第三方 OpenAI-compatible 中转站（OneAPI / NewAPI / Cloudflare 反代）会出现瞬时 502/503，或因缺少标准 User-Agent 而被拦截。上游遇到这类错误直接透传，不重试。
+
+**修复：** 对上游 502/503 加入自动重试；补充标准 User-Agent 请求头。
+
+---
+
+### 7. Skills / MCP 离线磁盘兜底扫描
+
+**问题：** 系统 `PATH` 里找不到 `codex` CLI 时，`codex app-server` 返回 `cli_not_found`，GUI 的 Skills 和 MCP 面板直接显示"无法读取"，即使 `~/.codex/skills/` 里已装了很多 skill。
+
+**修复（`desktop/settings.mjs`）：** 新增 `scanDiskSkillsFallback()`，当 `codex app-server` 不可用时直接扫描本地 `~/.codex/skills/` 目录，不再依赖 CLI 进程。
+
+---
+
+## 上游项目
+
+本 fork 基于 [wangzhezbz/codex-bridge](https://github.com/wangzhezbz/codex-bridge) v0.3.13，原始 License（MIT，版权归 wangzhezbz）见 `LICENSE` 文件。
+
+关于下载安装、Codex 配置、计费模式、故障排查等通用使用说明请参考上游仓库 README，本 fork 未修改这些内容。
 
 ## License
 
-MIT，见 `LICENSE`。版权归原作者 wangzhezbz 所有；本 fork 的新增/修改部分同样以 MIT 方式开源。
+MIT。原始版权归 wangzhezbz。本 fork 新增/修改部分同样以 MIT 方式开源。
