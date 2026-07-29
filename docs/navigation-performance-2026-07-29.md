@@ -15,6 +15,10 @@ Capabilities, Statistics, Settings, Resources, and Sessions pages.
 3. Usage and log broadcasts updated DOM while unrelated pages were active.
 4. Saving provider settings broadcast a full state and then built a second
    full state for the IPC response before returning to the model list.
+5. When a page cache was invalid, navigation changed the selected classes and
+   then rebuilt the Models or Capabilities DOM in the same click task. Chromium
+   could not paint the selected navigation item until that synchronous work
+   completed.
 
 ## Changes
 
@@ -35,6 +39,9 @@ Capabilities, Statistics, Settings, Resources, and Sessions pages.
   model catalog fetches one lightweight state only when the user returns to it.
 - Keep the image-input toggle durable, but update its active model card
   locally rather than broadcasting and rerendering the entire application.
+- Paint the selected navigation item and newly visible panel before rebuilding
+  invalid page content. Deferred work checks the active page again so rapid
+  navigation cannot render a stale destination.
 
 ## Verification
 
@@ -45,6 +52,7 @@ node --check desktop/main.cjs
 node --check desktop/renderer/app.js
 node --check desktop/settings.mjs
 node scripts/verify-claude-messages-native.mjs
+node scripts/verify-navigation-paint.mjs
 git diff --check
 ```
 

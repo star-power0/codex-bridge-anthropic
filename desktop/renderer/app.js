@@ -913,17 +913,25 @@ function activateSection(sectionId) {
     !loadedDetailSections.has(sectionId);
   if (needsDetail) {
     renderDetailLoading(sectionId);
-  } else {
-    renderActiveSection(sectionId);
   }
-  void ensureSettingsDetailForSection(sectionId);
-  void ensureDetailedStateForSection(sectionId);
-  if (sectionId === "sessions") {
-    void refreshHistoryRecoveryStatus();
-  }
-  if (sectionId === "doubleQuota") {
-    void refreshDoubleQuotaState();
-  }
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (currentSectionId() !== sectionId) {
+        return;
+      }
+      if (!needsDetail) {
+        renderActiveSection(sectionId);
+      }
+      void ensureSettingsDetailForSection(sectionId);
+      void ensureDetailedStateForSection(sectionId);
+      if (sectionId === "sessions") {
+        void refreshHistoryRecoveryStatus();
+      }
+      if (sectionId === "doubleQuota") {
+        void refreshDoubleQuotaState();
+      }
+    });
+  });
 }
 
 function currentStateRevision() {

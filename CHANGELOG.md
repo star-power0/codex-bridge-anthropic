@@ -2,6 +2,33 @@
 
 本文件只记录本 fork 相对上游 `wangzhezbz/codex-bridge` 0.3.13 发行版的改动，不包含上游自身的历史变更（见上游仓库）。
 
+## 2026-07-29
+
+### Performance
+- 导航页改为按状态版本缓存：模型、能力、统计、设置等页面在状态未变化时切换不再重复拼接 HTML、重绑事件或重建整块 DOM；状态变化后才失效并重绘当前页。
+- 后台用量和日志更新改为仅刷新当前可见的统计、概览或日志页，避免在其他页面操作时触发无关 DOM 更新。
+- 详情状态读取按页面拆分：能力页不再附带读取会话树、资源快照和完整体检；会话、资源、体检各自首次进入时才加载对应数据，并保留已读取分片。
+- 能力页历史记录首屏限制为最近 48 条能力执行记录和 36 条图片生成记录，减少缩略图编码、IPC 传输和首次渲染开销。
+- 保存供应商设置不再同时广播完整状态并再次返回完整状态；返回模型列表时只读取一次轻量状态，消除保存阶段的重复状态构建与重复渲染。
+- 模型图片上传开关保留原子配置事务，但改为局部更新当前按钮和模型状态，不再广播完整状态或重绘整页；新增运行时耗时日志用于排查配置写入延迟。
+- 模型、能力等页面的失效内容重绘改到导航选中态完成首帧绘制之后执行；快速连续切页时丢弃旧页面的排队任务，避免大块 DOM 重建阻塞侧栏切换反馈。
+
+### Verification
+- `node --check desktop/main.cjs`、`node --check desktop/renderer/app.js`、`node --check desktop/settings.mjs` 和 `git diff --check` 通过。
+- `node scripts/verify-claude-messages-native.mjs` 通过。
+- 新增 `node scripts/verify-navigation-paint.mjs`，验证导航重绘不会占用点击回调且不会渲染已离开的页面。
+- 本发行目录缺少 `node_modules/electron`、`scripts/desktop-smoke.mjs`、`scripts/route-sync-smoke.mjs`；`npm run desktop:smoke` 与 package 脚本指定的 route smoke 无法在该目录执行，改由已安装 EXE 的隔离 smoke 验证。
+
+## 2026-07-28
+
+### Changed
+- Codex Dream Skin preset `xiao-xiao-hu-nan`: reduced right-side white dominance by changing `panel` from `#f0f6f9` to `#bed8e1` and `panelAlt` from `#e2ecf1` to `#adc9d4`.
+- Darkened header-facing theme accents by changing `accent` from `#1d5e7a` to `#083044`, `accentAlt` from `#3d7fa0` to `#2e708e`, and `highlight` from `#9e6820` to `#72430f`, keeping正文 `text` / `muted` unchanged.
+- Added preset-level header Safe CSS foreground/border tuning in `theme.css` without touching shared runtime CSS.
+
+### Verified
+- Contrast pairings all pass, Safe CSS validator returned `status: validated`, saved theme activated, live computed variables matched the new palette, and focused live Dream Skin verification passed for revision `f48147079f3b60afc6db`.
+
 ## 2026-07-25
 
 ### Added
