@@ -728,6 +728,38 @@ function runCodexResourceSnapshotWorker(options = {}) {
   });
 }
 
+function runStartupCheckWorker() {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, "preflight-worker.cjs"), {
+      workerData: {
+        rootDir: dataRootDir,
+        homeDir: desktopHomeDir(),
+        appVersion: app.getVersion(),
+        routerRunning: Boolean(routerProcess),
+        lastHealth,
+      },
+    });
+    let settled = false;
+    worker.once("message", (message) => {
+      settled = true;
+      if (message?.ok) {
+        resolve(message.result || null);
+        return;
+      }
+      reject(new Error(message?.error || "Startup check worker failed"));
+    });
+    worker.once("error", (error) => {
+      settled = true;
+      reject(error);
+    });
+    worker.once("exit", (code) => {
+      if (!settled && code !== 0) {
+        reject(new Error(`Startup check worker exited with code ${code}`));
+      }
+    });
+  });
+}
+
 async function readCodexResourceSnapshotsRetained(options = {}) {
   let fresh = await runCodexResourceSnapshotWorker(options);
   if (!lastCodexResourceSnapshots && !hasCodexResourceAuthority(fresh)) {
@@ -1160,20 +1192,7 @@ ipcMain.handle("options:save", async (_event, options) => {
 });
 
 ipcMain.handle("startup:check", async () => {
-  const settings = await loadSettings();
-  const config = settings.readRouterConfig(dataRootDir);
-  const desktopOptions = settings.loadDesktopOptions(dataRootDir);
-  const { codexCliSnapshot, codexPromptInputSnapshot } =
-    settings.readCodexResourceSnapshots({ desktopOptions });
-  const check = settings.buildStartupCheck(dataRootDir, {
-    appVersion: app.getVersion(),
-    routerRunning: Boolean(routerProcess),
-    lastHealth,
-    config,
-    codexCliSnapshot,
-    codexPromptInputSnapshot,
-    releaseAssets: releaseAssetsForDesktopPreflight(settings, { logErrors: true }),
-  });
+  const check = await runStartupCheckWorker();
   appendLog(`Startup check: pass=${check.summary.pass} warn=${check.summary.warn} fail=${check.summary.fail}.`);
   return check;
 });
@@ -1521,7 +1540,8 @@ ipcMain.handle("providers:refreshModels", async (_event, providerId) => {
   const { providerFingerprint: _providerFingerprint, ...publicResult } = result;
   return {
     result: publicResult,
-    state: await getStatePayload(settings),
+    // lite:true — providers/modelDirectory/modelPresets are always included; skips unrelated resource snapshot network call
+    state: await getStatePayload(settings, { lite: true }),
   };
 });
 
@@ -4933,6 +4953,11 @@ async function buildStatePayload(settings, options = {}) {
       `[resource-flow] stage=listCodexResources plugins=${codexResources?.pluginPage?.summary?.plugins ?? "unavailable"} apps=${codexResources?.pluginPage?.summary?.apps ?? "unavailable"} app_ids=${(codexResources?.pluginPage?.apps || []).map((item) => item.id).join(",")} mcp=${codexResources?.pluginPage?.summary?.mcpServers ?? "unavailable"} skills=${codexResources?.pluginPage?.summary?.skills ?? "unavailable"}`,
     );
   }
+  // NOTE: startupCheck is NOT fetched inside state:get. The state:get IPC
+  // channel is serialized – awaiting the preflight worker here blocks every
+  // other state:get call (e.g. navigating to Models) until the check finishes.
+  // The renderer fetches it independently via the dedicated startup:check channel.
+  const startupCheck = null;
   return {
     rootDir: dataRootDir,
     appRootDir,
@@ -4969,17 +4994,7 @@ async function buildStatePayload(settings, options = {}) {
     secretStatus: settings.secretStatus(dataRootDir),
     desktopOptions,
     diagnostics,
-    startupCheck: includePreflightDetail
-      ? settings.buildStartupCheck(dataRootDir, {
-        appVersion: app.getVersion(),
-        routerRunning: Boolean(routerProcess),
-        lastHealth,
-        config,
-        releaseAssets: releaseAssetsForDesktopPreflight(settings),
-        codexCliSnapshot,
-        codexPromptInputSnapshot,
-      })
-      : null,
+    startupCheck,
     settingsDetailLoaded: includeSettingsDetail,
     configProfiles: settings.loadConfigProfiles(dataRootDir),
     codexBackups: includeSettingsDetail ? settings.listCodexBackups() : [],

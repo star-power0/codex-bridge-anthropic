@@ -19,6 +19,9 @@ Capabilities, Statistics, Settings, Resources, and Sessions pages.
    then rebuilt the Models or Capabilities DOM in the same click task. Chromium
    could not paint the selected navigation item until that synchronous work
    completed.
+6. The first Preflight visit built the complete startup check in Electron's
+   main process. Session, plugin, resource, backup, and installation scans
+   blocked window input dispatch until the check completed.
 
 ## Changes
 
@@ -42,6 +45,9 @@ Capabilities, Statistics, Settings, Resources, and Sessions pages.
 - Paint the selected navigation item and newly visible panel before rebuilding
   invalid page content. Deferred work checks the active page again so rapid
   navigation cannot render a stale destination.
+- Run both first-load and manual startup checks in a worker thread. The check
+  remains complete, but Electron's main process stays available to dispatch
+  navigation input while it runs.
 
 ## Verification
 
@@ -53,6 +59,7 @@ node --check desktop/renderer/app.js
 node --check desktop/settings.mjs
 node scripts/verify-claude-messages-native.mjs
 node scripts/verify-navigation-paint.mjs
+node scripts/verify-preflight-worker.mjs
 git diff --check
 ```
 
@@ -62,3 +69,25 @@ package scripts reference the latter two paths. Therefore `npm run
 desktop:smoke` and the package route-smoke command cannot execute from this
 directory. The installed Windows application remains the runtime verification
 target.
+
+---
+
+## Addendum — 刷新模型卡顿（2026-07-29 续）
+
+### Root Causes
+
+7. `providers:refreshModels` IPC 刷新完后调用 `getStatePayload(settings)`（无参数），`includeAllDetail = true`，触发 `readCodexResourceSnapshotsRetained` 发起 Codex 插件市场网络请求，与模型刷新完全无关，却阻塞了整个 IPC 响应返回。
+8. 刷新模型按钮回调在 IPC 返回后调用 `render()`，内部走 `renderActiveSection("models", { force: true })`，全量重建 models 页所有子渲染函数（renderModelPool/renderProviderEditor/renderCustomEditor/renderSelectedModels/renderProviderPreview/renderCustomFormState）并重绑所有事件，开销远超实际需要。
+
+### Changes
+
+- `desktop/main.cjs`：`providers:refreshModels` handler 的返回值从 `getStatePayload(settings)` 改为 `getStatePayload(settings, { lite: true })`，跳过资源快照网络调用。
+- `desktop/renderer/app.js`：刷新模型按钮回调从 `render()` 改为精准调用 `renderModelPool() + renderProviderEditor() + renderSelectedModels()`，只重建模型页相关 DOM 节点。
+
+### Verification
+
+```powershell
+node --check desktop/main.cjs
+node --check desktop/renderer/app.js
+git diff --check
+```

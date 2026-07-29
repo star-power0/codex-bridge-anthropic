@@ -12,13 +12,20 @@
 - 保存供应商设置不再同时广播完整状态并再次返回完整状态；返回模型列表时只读取一次轻量状态，消除保存阶段的重复状态构建与重复渲染。
 - 模型图片上传开关保留原子配置事务，但改为局部更新当前按钮和模型状态，不再广播完整状态或重绘整页；新增运行时耗时日志用于排查配置写入延迟。
 - 模型、能力等页面的失效内容重绘改到导航选中态完成首帧绘制之后执行；快速连续切页时丢弃旧页面的排队任务，避免大块 DOM 重建阻塞侧栏切换反馈。
+- 首次体检和手动重新体检的完整扫描移入独立 Worker；会话、插件、资源、备份和安装位置等同步检查不再占用 Electron 主进程，体检运行期间仍可立即切换模型等页面。
 
 ### Verification
 - `node --check desktop/main.cjs`、`node --check desktop/renderer/app.js`、`node --check desktop/settings.mjs` 和 `git diff --check` 通过。
 - `node scripts/verify-claude-messages-native.mjs` 通过。
 - 新增 `node scripts/verify-navigation-paint.mjs`，验证导航重绘不会占用点击回调且不会渲染已离开的页面。
+- 新增 `node scripts/verify-preflight-worker.mjs`，验证体检详情和手动体检均由 Worker 执行，主进程不再直接运行同步体检构建。
 - 本发行目录缺少 `node_modules/electron`、`scripts/desktop-smoke.mjs`、`scripts/route-sync-smoke.mjs`；`npm run desktop:smoke` 与 package 脚本指定的 route smoke 无法在该目录执行，改由已安装 EXE 的隔离 smoke 验证。
 
+## 2026-07-29（续）
+
+### Performance — 刷新模型卡顿
+- `providers:refreshModels` IPC 返回时从 `getStatePayload(settings)` 改为 `getStatePayload(settings, { lite: true })`：原调用触发 `includeAllDetail = true`，会执行 `readCodexResourceSnapshotsRetained`（拉 Codex 插件市场数据，走网络）；该调用与模型刷新完全无关，却阻塞了整个 IPC 响应。
+- 刷新模型按钮回调从 `render()`（全量重建所有页面 DOM + 重绑所有事件）改为仅调用 `renderModelPool() / renderProviderEditor() / renderSelectedModels()`，只重建模型页相关节点。
 ## 2026-07-28
 
 ### Changed

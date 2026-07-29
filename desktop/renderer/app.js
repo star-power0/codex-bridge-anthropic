@@ -1883,6 +1883,30 @@ async function ensureDetailedStateForSection(sectionId) {
   } finally {
     loadingDetailSections.delete(sectionId);
   }
+  // For the preflight section, state:get no longer blocks on the startup-check
+  // worker (to keep navigation responsive). Fire the check independently here,
+  // after state:get has returned and the page is already interactive.
+  if (sectionId === "preflight") {
+    void fetchAndApplyStartupCheck();
+  }
+}
+
+let startupCheckPending = false;
+
+async function fetchAndApplyStartupCheck() {
+  if (startupCheckPending) {
+    return;
+  }
+  startupCheckPending = true;
+  try {
+    const check = await api.runStartupCheck();
+    state = { ...state, startupCheck: check };
+    renderStartupCheck();
+  } catch (error) {
+    console.error("Startup check failed:", error);
+  } finally {
+    startupCheckPending = false;
+  }
 }
 
 async function ensureSettingsDetailForSection(sectionId) {
@@ -6420,7 +6444,10 @@ function bindProviderRefreshButtons(root) {
         const response = await api.refreshProviderModels(button.dataset.refreshProviderModels);
         state = response?.state || await api.getState();
         draftSelection = [...state.selectedModelIds];
-        render();
+        // Only update model-page DOM — avoids rebuilding unrelated sections after a model refresh
+        renderModelPool();
+        renderProviderEditor();
+        renderSelectedModels();
         const result = response?.result || {};
         showToast(
           result.ok
