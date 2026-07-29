@@ -1093,7 +1093,7 @@ async function readStreamText(upstream, context = {}) {
   }
   const reader = upstream.body.getReader();
   const chunks = [];
-  const _streamStartMs = Date.now();
+  const _streamStartMs = context.ttftStartMs || Date.now();
   let _ttftCaptured = false;
   let abortHandler;
   const abortPromise = new Promise((_, reject) => {

@@ -3228,6 +3228,7 @@ async function callNativeClaudeMessages(
   context = {},
   options = {},
 ) {
+  context.ttftStartMs = Date.now();
   const upstream = await fetchUpstream(
     messagesUrl,
     {
