@@ -2230,7 +2230,7 @@ export async function proxyAnthropicMessages(
     { preferVisibleToolStatus: true },
   );
   response = annotateSmartFailoverResponse(response, nativeRoute, context);
-  logUsage(context, nativeRoute, response.usage);
+  logUsage(context, nativeRoute, response.usage, context.ttftMs ?? null);
   const toolCallSignatures = responseToolCallSignatures(response);
   const toolResultSignatures = latestToolResultSignaturesFromInput(
     requestBody?.messages ?? requestBody?.input,

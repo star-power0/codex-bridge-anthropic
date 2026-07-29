@@ -1093,6 +1093,8 @@ async function readStreamText(upstream, context = {}) {
   }
   const reader = upstream.body.getReader();
   const chunks = [];
+  const _streamStartMs = Date.now();
+  let _ttftCaptured = false;
   let abortHandler;
   const abortPromise = new Promise((_, reject) => {
     abortHandler = () => {
@@ -1107,6 +1109,7 @@ async function readStreamText(upstream, context = {}) {
     while (true) {
       const result = await Promise.race([reader.read(), abortPromise]);
       if (result.done) break;
+      if (!_ttftCaptured) { _ttftCaptured = true; context.ttftMs = Date.now() - _streamStartMs; }
       chunks.push(Buffer.from(result.value));
     }
     return Buffer.concat(chunks).toString("utf8");
