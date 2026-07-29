@@ -1189,17 +1189,23 @@ ipcMain.handle("models:saveSelection", async (_event, selectedModelIds) => {
 });
 
 ipcMain.handle("models:saveImageInput", async (_event, payload) => {
+  const startedAt = Date.now();
   const settings = await loadSettings();
   const presetId = String(payload?.presetId || "");
   const committed = await commitConfigMutation(settings, "models:saveImageInput", {
     presetId,
     imageInput: Boolean(payload?.imageInput),
-  });
+  }, { publish: false });
   const saved = committed.result.saved;
+  const elapsedMs = Date.now() - startedAt;
   appendLog(
     `Updated image upload support: ${saved.presetId} ${saved.imageInput ? "enabled" : "disabled"}.`,
   );
-  return getStatePayload(settings);
+  appendRuntimeLog(
+    `image-input-toggle preset=${saved.presetId} enabled=${saved.imageInput} transaction_ms=${elapsedMs} ` +
+      `timing=${JSON.stringify(committed.timing || {})}`,
+  );
+  return { saved, timingMs: elapsedMs, timing: committed.timing || {} };
 });
 
 ipcMain.handle("models:saveImageGeneration", async (_event, payload) => {
@@ -1524,13 +1530,12 @@ ipcMain.handle("providers:save", async (_event, provider) => {
   const providerId = String(provider?.providerId || provider?.id || "").trim();
   const committed = await commitConfigMutation(settings, "providers:save", {
     provider: { ...(provider || {}), id: providerId },
-  });
+  }, { publish: false });
   const saved = committed.result.saved;
   appendLog(`Saved provider settings: ${saved.name || providerId}.`);
   return {
     saved,
-    sync: committed,
-    state: await getStatePayload(settings),
+    sync: committed.result,
   };
 });
 
@@ -4870,7 +4875,13 @@ function buildStateUnavailablePayload() {
 
 async function buildStatePayload(settings, options = {}) {
   const lite = Boolean(options.lite);
-  const includeSettingsDetail = !lite || Boolean(options.settingsDetail);
+  const detailSection = String(options.detailSection || "").trim();
+  const includeAllDetail = !lite && !detailSection;
+  const includePreflightDetail = includeAllDetail || detailSection === "preflight";
+  const includeCapabilitiesDetail = includeAllDetail || detailSection === "capabilities";
+  const includeResourcesDetail = includeAllDetail || detailSection === "resources";
+  const includeSessionsDetail = includeAllDetail || detailSection === "sessions";
+  const includeSettingsDetail = includeAllDetail || Boolean(options.settingsDetail);
   const config = settings.readRouterConfig(dataRootDir);
   usageRoutes = config?.models || [];
   const desktopOptions = settings.loadDesktopOptions(dataRootDir);
@@ -4879,14 +4890,16 @@ async function buildStatePayload(settings, options = {}) {
   const mode = settings.detectModeFromConfig(config);
   const diagnostics = settings.routerConfigDiagnostics(dataRootDir, config);
   const homeDir = desktopHomeDir();
-  const codexSessionTree = lite ? null : settings.listCodexSessionTree({ homeDir, limit: SESSION_CENTER_LIMIT });
+  const codexSessionTree = includeSessionsDetail
+    ? settings.listCodexSessionTree({ homeDir, limit: SESSION_CENTER_LIMIT })
+    : null;
   const codexSessions = Array.isArray(codexSessionTree?.sessions)
     ? codexSessionTree.sessions
-    : lite ? [] : settings.listCodexSessions({ homeDir, limit: SESSION_CENTER_LIMIT });
+    : includeSessionsDetail ? settings.listCodexSessions({ homeDir, limit: SESSION_CENTER_LIMIT }) : [];
   const smokeResourceSnapshotPath = process.env.CODEXBRIDGE_DESKTOP_SMOKE === "1"
     ? String(process.env.CODEXBRIDGE_DESKTOP_SMOKE_RESOURCE_SNAPSHOT || "").trim()
     : "";
-  const codexResourceSnapshots = lite
+  const codexResourceSnapshots = !includeResourcesDetail
     ? null
     : smokeResourceSnapshotPath
       ? JSON.parse(fs.readFileSync(smokeResourceSnapshotPath, "utf8"))
@@ -4899,7 +4912,7 @@ async function buildStatePayload(settings, options = {}) {
   const codexCliSnapshot = codexResourceSnapshots?.codexCliSnapshot || null;
   const codexPromptInputSnapshot = codexResourceSnapshots?.codexPromptInputSnapshot || null;
   const codexAppServerSnapshot = codexResourceSnapshots?.codexAppServerSnapshot || null;
-  const codexResources = lite
+  const codexResources = !includeResourcesDetail
     ? null
     : settings.listCodexResources({
         rootDir: appRootDir,
@@ -4911,7 +4924,7 @@ async function buildStatePayload(settings, options = {}) {
         codexAppServerSnapshot,
         includeCodexAppServerSnapshot: true,
       });
-  if (!lite && options.forceResourceRefresh) {
+  if (includeResourcesDetail && options.forceResourceRefresh) {
     const appItems = codexAppServerSnapshot?.apps?.items || [];
     appendRuntimeLog(
       `[resource-flow] stage=readCodexResourceSnapshots apps=${appItems.length} app_ids=${appItems.map((item) => item.id).join(",")} source=${codexAppServerSnapshot?.snapshotSource || "unavailable"} cached=${codexAppServerSnapshot?.cached === true} refreshed_at=${codexAppServerSnapshot?.authoritativeRefreshedAt || codexAppServerSnapshot?.refreshedAt || "unknown"}`,
@@ -4941,21 +4954,23 @@ async function buildStatePayload(settings, options = {}) {
     imageProviderConfig: settings.readImageProviderConfig(dataRootDir),
     capabilityProviders: settings.readCapabilityProviders(dataRootDir),
     capabilityProviderGroups: settings.readCapabilityProviderGroups(dataRootDir),
-    stateDetailLoaded: !lite,
-    capabilityExecutionHistory: lite
-      ? []
-      : settings.readCapabilityExecutionHistory(dataRootDir, { includeThumbnails: true }),
-    imageGenerationHistory: lite
-      ? []
-      : settings.readImageGenerationHistory(dataRootDir, { includeThumbnails: true }),
+    stateDetailLoaded: includeAllDetail,
+    stateDetailSections: includeAllDetail
+      ? ["preflight", "capabilities", "resources", "sessions"]
+      : detailSection ? [detailSection] : [],
+    capabilityExecutionHistory: includeCapabilitiesDetail
+      ? settings.readCapabilityExecutionHistory(dataRootDir, { includeThumbnails: true, limit: 48 })
+      : [],
+    imageGenerationHistory: includeCapabilitiesDetail
+      ? settings.readImageGenerationHistory(dataRootDir, { includeThumbnails: true, limit: 36 })
+      : [],
     configPackageSyncStatus: settings.readConfigPackageSyncStatus(dataRootDir),
     configPackageImportBackupStatus: settings.readConfigPackageImportBackupStatus(dataRootDir),
     secretStatus: settings.secretStatus(dataRootDir),
     desktopOptions,
     diagnostics,
-    startupCheck: lite
-      ? null
-      : settings.buildStartupCheck(dataRootDir, {
+    startupCheck: includePreflightDetail
+      ? settings.buildStartupCheck(dataRootDir, {
         appVersion: app.getVersion(),
         routerRunning: Boolean(routerProcess),
         lastHealth,
@@ -4963,14 +4978,17 @@ async function buildStatePayload(settings, options = {}) {
         releaseAssets: releaseAssetsForDesktopPreflight(settings),
         codexCliSnapshot,
         codexPromptInputSnapshot,
-      }),
+      })
+      : null,
     settingsDetailLoaded: includeSettingsDetail,
     configProfiles: settings.loadConfigProfiles(dataRootDir),
     codexBackups: includeSettingsDetail ? settings.listCodexBackups() : [],
     codexResources,
     codexSessions,
     codexSessionTree,
-    codexProjectRecoveryPlan: lite ? null : settings.codexProjectRecoveryPlan({ limit: SESSION_CENTER_LIMIT }),
+    codexProjectRecoveryPlan: includeSessionsDetail
+      ? settings.codexProjectRecoveryPlan({ limit: SESSION_CENTER_LIMIT })
+      : null,
     lastHealth,
     usageEvents: usageStore?.events() || [],
     usageSummary,

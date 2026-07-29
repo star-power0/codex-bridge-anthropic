@@ -10716,7 +10716,7 @@ function modelsForProviderDirectoryEntry(provider, entry, presets, usedPresetIds
       contextWindow: Number(remoteModel?.contextWindow || exact?.contextWindow || fallbackTemplate?.contextWindow || 258400),
       ...(Array.isArray(exact?.inputModalities)
         ? { inputModalities: [...exact.inputModalities] }
-        : exact ? {} : { inputModalities: ["text"] }),
+        : exact ? {} : { inputModalities: ["text", "image"] }),
       ...(Array.isArray(dropParams) && dropParams.length ? { dropParams: [...dropParams] } : {}),
       synced: true,
       custom: Boolean(provider.custom || exact?.custom || fallbackTemplate?.custom),
@@ -10866,7 +10866,7 @@ function syncedProviderModels(rootDir) {
         keyUrl: provider.keyUrl || "",
         docsUrl: provider.docsUrl || "",
         contextWindow: template?.contextWindow || 258400,
-        inputModalities: ["text"],
+        inputModalities: ["text", "image"],
         ...(Array.isArray(template?.dropParams) ? { dropParams: [...template.dropParams] } : {}),
         synced: true,
         custom: false,
@@ -15572,6 +15572,14 @@ export async function applyConfigMutationTransaction({
   managedTomlRetryDelays = [100, 250, 500],
   waitForManagedTomlRetry = ({ delayMs }) => new Promise((resolve) => setTimeout(resolve, delayMs)),
 } = {}) {
+  const timingEnabled = operation === "models:saveImageInput";
+  const transactionStartedAt = timingEnabled ? Date.now() : 0;
+  const phaseTimings = {};
+  const markTiming = (name, startedAt) => {
+    if (timingEnabled) {
+      phaseTimings[name] = Date.now() - startedAt;
+    }
+  };
   if (typeof rootDir !== "string" || !rootDir.trim()) {
     throw new TypeError("rootDir is required.");
   }
@@ -15607,7 +15615,10 @@ export async function applyConfigMutationTransaction({
         : [];
       for (let managedTomlAttempt = 0; ; managedTomlAttempt += 1) {
         try {
+      const snapshotStartedAt = timingEnabled ? Date.now() : 0;
       const snapshot = captureStableConfigMutationSnapshot(rootDir, homeDir);
+      markTiming("snapshot_ms", snapshotStartedAt);
+      const mutationStartedAt = timingEnabled ? Date.now() : 0;
       const preparedAt = configMutationNow({ now });
       const mutated = mutateConfigState(
         rootDir,
@@ -15616,6 +15627,8 @@ export async function applyConfigMutationTransaction({
         payload,
         { now: preparedAt },
       );
+      markTiming("mutate_ms", mutationStartedAt);
+      const buildStartedAt = timingEnabled ? Date.now() : 0;
       const state = {
         ...mutated.state,
         rootDir,
@@ -15641,6 +15654,7 @@ export async function applyConfigMutationTransaction({
       state.desktopOptions = routerCandidate.desktopOptions;
       const routerConfig = routerCandidate.routerConfig;
       const catalog = buildModelCatalog(routerConfig);
+      markTiming("build_ms", buildStartedAt);
       const currentCodexBytes = snapshot.originals.get(codexConfigPath(homeDir)) ?? Buffer.alloc(0);
       const managedPlan = managedCodexMutationPlan({
         operation,
@@ -15801,6 +15815,7 @@ export async function applyConfigMutationTransaction({
           },
         });
       }
+      const prepareCompletedAt = timingEnabled ? Date.now() : 0;
       return {
         entries,
         value: {
@@ -15814,6 +15829,12 @@ export async function applyConfigMutationTransaction({
             ...mutated.operationResult,
             ...(importBackup || {}),
           },
+          timing: timingEnabled
+            ? {
+                ...phaseTimings,
+                prepare_ms: prepareCompletedAt - transactionStartedAt,
+              }
+            : null,
         },
       };
         } catch (error) {
@@ -17945,7 +17966,7 @@ function modelWithDefaultCapabilities(model) {
   if (model.custom && model.inputModalities === undefined) {
     return {
       ...model,
-      inputModalities: normalizeInputModalities(model.inputModalities, ["text"]),
+      inputModalities: normalizeInputModalities(model.inputModalities, ["text", "image"]),
     };
   }
   return model;
@@ -18404,7 +18425,7 @@ function normalizeCustomModel(input = {}) {
     docsUrl: String(input.docsUrl || "").trim(),
     logoUrl: String(input.logoUrl || "").trim(),
     contextWindow: Number(input.contextWindow || 258400),
-    inputModalities: normalizeInputModalities(input.inputModalities, ["text"]),
+    inputModalities: normalizeInputModalities(input.inputModalities, ["text", "image"]),
     ...(dropParams.length && input.api !== "responses" ? { dropParams } : {}),
     custom: true,
   };

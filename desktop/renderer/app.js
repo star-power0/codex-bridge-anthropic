@@ -98,6 +98,10 @@ function codexResourceCountLabel(source = {}, suffix = "") {
 
 let state = null;
 let refreshRequestSequence = 0;
+let renderedStateReference = null;
+let renderedStateRevision = 0;
+let lastStateUnavailableLock = null;
+const sectionRenderRevisions = new Map();
 let historyRecoveryActionSequence = 0;
 const STATE_UNAVAILABLE_WRITE_MESSAGE = "状态暂不可用：当前显示的是上次快照，写入操作已锁定。请刷新恢复后再试。";
 const STATE_UNAVAILABLE_READ_ONLY_API_METHODS = new Set([
@@ -302,7 +306,8 @@ let historyRecoveryStatus = null;
 let doubleQuotaState = null;
 let sessionSearchText = "";
 let stateDetailLoaded = false;
-let stateDetailLoading = false;
+const loadedDetailSections = new Set();
+const loadingDetailSections = new Set();
 let settingsDetailLoaded = false;
 let settingsDetailLoading = false;
 const resourceExpandedKeys = new Set();
@@ -904,7 +909,13 @@ function activateSection(sectionId) {
   document.querySelectorAll(".section-panel").forEach((item) => item.classList.add("hidden"));
   button.classList.add("active");
   section.classList.remove("hidden");
-  renderActiveSection(sectionId);
+  const needsDetail = DETAIL_STATE_SECTIONS.has(sectionId) &&
+    !loadedDetailSections.has(sectionId);
+  if (needsDetail) {
+    renderDetailLoading(sectionId);
+  } else {
+    renderActiveSection(sectionId);
+  }
   void ensureSettingsDetailForSection(sectionId);
   void ensureDetailedStateForSection(sectionId);
   if (sectionId === "sessions") {
@@ -913,6 +924,23 @@ function activateSection(sectionId) {
   if (sectionId === "doubleQuota") {
     void refreshDoubleQuotaState();
   }
+}
+
+function currentStateRevision() {
+  if (state !== renderedStateReference) {
+    renderedStateReference = state;
+    renderedStateRevision += 1;
+    sectionRenderRevisions.clear();
+  }
+  return renderedStateRevision;
+}
+
+function invalidateSectionRender(...sectionIds) {
+  if (!sectionIds.length) {
+    sectionRenderRevisions.clear();
+    return;
+  }
+  sectionIds.forEach((sectionId) => sectionRenderRevisions.delete(sectionId));
 }
 
 async function refreshDoubleQuotaState() {
@@ -1767,11 +1795,14 @@ document.addEventListener("keydown", (event) => {
 });
 
 api.onLogs((logs) => {
-  state = {
-    ...state,
-    logs: [...logs],
-  };
-  renderLogs(logs);
+  if (!state) {
+    return;
+  }
+  state.logs = [...logs];
+  invalidateSectionRender("logs");
+  if (currentSectionId() === "logs") {
+    renderActiveSection("logs");
+  }
 });
 api.onUpdateProgress?.((progress) => renderUpdateProgress(progress));
 api.onUpdateFinished?.((result) => {
@@ -1784,21 +1815,19 @@ api.onUsage((usage) => {
   if (!state) {
     return;
   }
-  state = {
-    ...state,
-    usageEvents: usage.usageEvents || [],
-    usageSummary: usage.usageSummary || emptyUsageSummary(),
-    usageBudgetAlerts: usage.usageBudgetAlerts || [],
-    usageCostEstimate: usage.usageCostEstimate || emptyUsageCostEstimate(),
-  };
-  renderUsage();
-  renderUsageBudgetAlerts();
-  renderUsageCostEstimate();
-  renderOverviewUsage();
+  state.usageEvents = usage.usageEvents || [];
+  state.usageSummary = usage.usageSummary || emptyUsageSummary();
+  state.usageBudgetAlerts = usage.usageBudgetAlerts || [];
+  state.usageCostEstimate = usage.usageCostEstimate || emptyUsageCostEstimate();
+  invalidateSectionRender("dashboard", "stats");
+  const sectionId = currentSectionId();
+  if (sectionId === "dashboard" || sectionId === "stats") {
+    renderActiveSection(sectionId);
+  }
 });
 api.onState((nextState) => {
   refreshRequestSequence += 1;
-  state = mergeStateWithRetainedDetailSlices(state, nextState);
+  applyStateSnapshot(nextState);
   if (nextState?.codexResources?.pluginPage) {
     console.info("[resource-flow] stage=renderer-state-assignment", {
       apps: nextState.codexResources.pluginPage.summary?.apps,
@@ -1806,9 +1835,6 @@ api.onState((nextState) => {
       snapshot: nextState.codexResources.pluginPage.snapshot?.state,
     });
   }
-  stateDetailLoaded = Boolean(state?.stateDetailLoaded || stateDetailLoaded);
-  settingsDetailLoaded = Boolean(state?.settingsDetailLoaded || settingsDetailLoaded);
-  draftSelection = [...(state.selectedModelIds || [])];
   render();
 });
 
@@ -1820,35 +1846,34 @@ async function refresh(options = {}) {
   if (requestSequence !== refreshRequestSequence) {
     return false;
   }
-  state = mergeStateWithRetainedDetailSlices(state, nextState);
-  stateDetailLoaded = Boolean(state?.stateDetailLoaded);
-  settingsDetailLoaded = Boolean(state?.settingsDetailLoaded || settingsDetailLoaded);
-  draftSelection = [...(state.selectedModelIds || [])];
+  applyStateSnapshot(nextState);
   render();
   return true;
 }
 
 async function ensureDetailedStateForSection(sectionId) {
-  if (!DETAIL_STATE_SECTIONS.has(sectionId) || stateDetailLoading) {
+  if (
+    !DETAIL_STATE_SECTIONS.has(sectionId) ||
+    loadingDetailSections.has(sectionId) ||
+    loadedDetailSections.has(sectionId)
+  ) {
     return;
   }
-  if (sectionId !== "resources" && stateDetailLoaded) {
-    return;
-  }
-  stateDetailLoading = true;
+  loadingDetailSections.add(sectionId);
   renderDetailLoading(sectionId);
   try {
-    state = await api.getState(sectionId === "resources"
-      ? { lite: false, forceResourceRefresh: true }
-      : { lite: false });
-    stateDetailLoaded = Boolean(state?.stateDetailLoaded);
-    draftSelection = [...(state.selectedModelIds || [])];
+    const nextState = await api.getState({
+      lite: false,
+      detailSection: sectionId,
+      ...(sectionId === "resources" ? { forceResourceRefresh: true } : {}),
+    });
+    applyStateSnapshot(nextState);
     render();
   } catch (error) {
     showToast(error?.message || String(error), "error");
     console.error(error);
   } finally {
-    stateDetailLoading = false;
+    loadingDetailSections.delete(sectionId);
   }
 }
 
@@ -1860,10 +1885,8 @@ async function ensureSettingsDetailForSection(sectionId) {
   renderSettingsDetailLoading(sectionId);
   try {
     const nextState = await api.getState({ lite: true, settingsDetail: true });
-    state = mergeStateWithRetainedDetailSlices(state, nextState);
-    settingsDetailLoaded = Boolean(state?.settingsDetailLoaded);
-    draftSelection = [...(state.selectedModelIds || [])];
-    renderActiveSection(sectionId);
+    applyStateSnapshot(nextState);
+    renderActiveSection(sectionId, { force: true });
   } catch (error) {
     showToast(error?.message || String(error), "error");
     console.error(error);
@@ -1884,6 +1907,10 @@ function renderDetailLoading(sectionId) {
   if (sectionId === "sessions" && els.sessionList) {
     els.sessionList.innerHTML = `<div class="empty-state">正在读取 Codex 会话...</div>`;
   }
+  if (sectionId === "capabilities") {
+    els.capabilitySummary.innerHTML = "";
+    els.capabilityDiagnostics.innerHTML = `<div class="empty-state">正在读取模型能力与最近记录...</div>`;
+  }
 }
 
 function renderSettingsDetailLoading(sectionId) {
@@ -1892,42 +1919,58 @@ function renderSettingsDetailLoading(sectionId) {
   }
 }
 
-const RETAINED_DETAIL_SLICE_KEYS = [
-  "startupCheck",
-  "codexBackups",
-  "codexResources",
-  "codexSessions",
-  "codexSessionTree",
-  "codexProjectRecoveryPlan",
-  "capabilityExecutionHistory",
-  "imageGenerationHistory",
-];
-
 function mergeStateWithRetainedDetailSlices(previousState, nextState) {
-  if (!previousState || !nextState || nextState.stateDetailLoaded) {
+  if (!previousState || !nextState) {
     return nextState;
   }
-  const shouldRetainDetail = Boolean(previousState.stateDetailLoaded || stateDetailLoaded);
+  const nextDetailSections = new Set(
+    Array.isArray(nextState.stateDetailSections) ? nextState.stateDetailSections : [],
+  );
+  if (nextState.stateDetailLoaded) {
+    ["preflight", "capabilities", "resources", "sessions"].forEach((section) => nextDetailSections.add(section));
+  }
   const shouldRetainSettingsDetail = Boolean(previousState.settingsDetailLoaded || settingsDetailLoaded);
-  if (!shouldRetainDetail && !shouldRetainSettingsDetail) {
-    return nextState;
-  }
   const merged = {
     ...nextState,
-    stateDetailLoaded: Boolean(nextState.stateDetailLoaded || shouldRetainDetail),
+    stateDetailLoaded: Boolean(nextState.stateDetailLoaded),
     settingsDetailLoaded: Boolean(nextState.settingsDetailLoaded || shouldRetainSettingsDetail),
   };
-  if (shouldRetainDetail) {
-    for (const key of RETAINED_DETAIL_SLICE_KEYS) {
-      if (previousState[key] !== undefined && previousState[key] !== null) {
-        merged[key] = previousState[key];
-      }
-    }
+  if (!nextDetailSections.has("preflight") && previousState.startupCheck !== undefined) {
+    merged.startupCheck = previousState.startupCheck;
   }
+  if (!nextDetailSections.has("capabilities")) {
+    merged.capabilityExecutionHistory = previousState.capabilityExecutionHistory;
+    merged.imageGenerationHistory = previousState.imageGenerationHistory;
+  }
+  if (!nextDetailSections.has("resources") && previousState.codexResources !== undefined) {
+    merged.codexResources = previousState.codexResources;
+  }
+  if (!nextDetailSections.has("sessions")) {
+    merged.codexSessions = previousState.codexSessions;
+    merged.codexSessionTree = previousState.codexSessionTree;
+    merged.codexProjectRecoveryPlan = previousState.codexProjectRecoveryPlan;
+  }
+  merged.stateDetailSections = [...new Set([
+    ...(Array.isArray(previousState.stateDetailSections) ? previousState.stateDetailSections : []),
+    ...nextDetailSections,
+  ])];
   if (shouldRetainSettingsDetail && previousState.codexBackups !== undefined && !nextState.settingsDetailLoaded) {
     merged.codexBackups = previousState.codexBackups;
   }
   return merged;
+}
+
+function applyStateSnapshot(nextState) {
+  state = mergeStateWithRetainedDetailSlices(state, nextState);
+  if (state?.stateDetailLoaded) {
+    ["preflight", "capabilities", "resources", "sessions"].forEach((section) => loadedDetailSections.add(section));
+  }
+  for (const section of state?.stateDetailSections || []) {
+    loadedDetailSections.add(section);
+  }
+  stateDetailLoaded = loadedDetailSections.size === DETAIL_STATE_SECTIONS.size;
+  settingsDetailLoaded = Boolean(state?.settingsDetailLoaded || settingsDetailLoaded);
+  draftSelection = [...(state?.selectedModelIds || [])];
 }
 
 function render() {
@@ -1935,6 +1978,7 @@ function render() {
     return;
   }
 
+  currentStateRevision();
   const stateUnavailable = Boolean(state.stateUnavailable);
   if (stateUnavailable) {
     els.routerStatus.textContent = state.routerRunning
@@ -1973,21 +2017,19 @@ function render() {
   if (document.activeElement !== els.routerPort) {
     els.routerPort.value = String(state.desktopOptions?.routerPort || 15722);
   }
-  renderCodexAuxiliaryTaskSettings();
-  renderSmartRoutingSettings();
-  renderModelReferenceStatus();
   if (els.acceptanceReleaseDir) {
     els.acceptanceReleaseDir.textContent = state.desktopOptions?.acceptanceReleaseDir || "未选择";
   }
-  renderUsageBudgetInputs();
-  renderCodexDesktopPath();
 
   document.querySelectorAll(".mode-card").forEach((button) => {
     button.classList.toggle("active", button.dataset.mode === state.mode);
   });
 
-  renderActiveSection(currentSectionId());
-  applyStateUnavailableWriteGuard(document, stateUnavailable);
+  renderActiveSection(currentSectionId(), { force: true });
+  if (lastStateUnavailableLock !== stateUnavailable) {
+    applyStateUnavailableWriteGuard(document, stateUnavailable);
+    lastStateUnavailableLock = stateUnavailable;
+  }
 }
 
 function currentSectionId() {
@@ -1998,47 +2040,43 @@ function currentSectionId() {
   return document.querySelector(".section-panel:not(.hidden)")?.id || "dashboard";
 }
 
-function renderActiveSection(sectionId = currentSectionId()) {
+function renderActiveSection(sectionId = currentSectionId(), { force = false } = {}) {
   if (!state) {
+    return;
+  }
+  const revision = currentStateRevision();
+  if (sectionId === "models") {
+    renderModelPageView();
+  }
+  if (!force && sectionRenderRevisions.get(sectionId) === revision) {
     return;
   }
   if (sectionId === "dashboard") {
     renderRouterToggle();
     renderHealthStatus();
     renderOverviewUsage();
-    return;
-  }
-  if (sectionId === "preflight") {
+  } else if (sectionId === "preflight") {
     renderStartupCheck();
-    return;
-  }
-  if (sectionId === "models") {
+  } else if (sectionId === "models") {
     renderSelectedModels();
-    renderModelPageView();
     renderProviderPreview();
     renderModelPool();
     renderProviderEditor();
     renderCustomEditor();
     renderCustomFormState();
-    return;
-  }
-  if (sectionId === "capabilities") {
+  } else if (sectionId === "capabilities") {
     renderCapabilityDiagnostics();
     renderCapabilityProviderList();
     renderCapabilityExecutionHistory();
     renderCapabilityProviderRunPresets();
     renderImageProviderSettings();
     renderImageGenerationHistory();
-    return;
-  }
-  if (sectionId === "stats") {
+  } else if (sectionId === "stats") {
     renderUsage();
     renderUsageBudgetInputs();
     renderUsageBudgetAlerts();
     renderUsageCostEstimate();
-    return;
-  }
-  if (sectionId === "settings") {
+  } else if (sectionId === "settings") {
     renderCodexAuxiliaryTaskSettings();
     renderSmartRoutingSettings();
     renderModelReferenceStatus();
@@ -2047,23 +2085,16 @@ function renderActiveSection(sectionId = currentSectionId()) {
     renderConfigPackageImportBackupStatus();
     renderProfiles();
     renderBackups();
-    return;
-  }
-  if (sectionId === "resources") {
+  } else if (sectionId === "resources") {
     renderResources();
-    return;
-  }
-  if (sectionId === "sessions") {
+  } else if (sectionId === "sessions") {
     renderSessions();
-    return;
-  }
-  if (sectionId === "logs") {
+  } else if (sectionId === "logs") {
     renderLogs(state.logs || []);
-    return;
-  }
-  if (sectionId === "doubleQuota") {
+  } else if (sectionId === "doubleQuota") {
     renderDoubleQuota();
   }
+  sectionRenderRevisions.set(sectionId, revision);
 }
 
 function renderDoubleQuota() {
@@ -4140,7 +4171,7 @@ function renderStartupCheck() {
   }
   const check = state.startupCheck;
   if (!check) {
-    els.startupCheckSummary.innerHTML = `<div class="empty-state">${stateDetailLoaded ? "暂无体检结果。" : "进入体检页后会读取结果。"}</div>`;
+    els.startupCheckSummary.innerHTML = `<div class="empty-state">${loadedDetailSections.has("preflight") ? "暂无体检结果。" : "进入体检页后会读取结果。"}</div>`;
     els.startupCheckList.innerHTML = "";
     return;
   }
@@ -4560,7 +4591,7 @@ function renderResources() {
       snapshot: resources.snapshot?.state,
     });
   }
-  if (!stateDetailLoaded && !state.codexResources) {
+  if (!loadedDetailSections.has("resources") && !state.codexResources) {
     els.resourceSummary.innerHTML = "";
     els.resourceList.innerHTML = `<div class="empty-state">进入资源页后会读取 Codex 当前资源。</div>`;
     return;
@@ -4748,7 +4779,7 @@ function renderSessions() {
     return;
   }
   renderHistoryRecoveryStatus();
-  if (!stateDetailLoaded && !state.codexSessionTree) {
+  if (!loadedDetailSections.has("sessions") && !state.codexSessionTree) {
     els.sessionList.innerHTML = `<div class="empty-state">进入会话页后会读取本机 Codex 会话。</div>`;
     return;
   }
@@ -6251,12 +6282,18 @@ function openCustomEditor(presetId = null, options = {}) {
   document.querySelector(".custom-editor-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-function openModelCatalog() {
+async function openModelCatalog() {
   modelPageView = "catalog";
   editingProviderId = null;
   customReturnView = "catalog";
   scopedCustomProviderId = null;
-  render();
+  renderModelPageView();
+  try {
+    await refresh({ lite: true });
+  } catch (error) {
+    showToast(error?.message || String(error), "error");
+    console.error(error);
+  }
   document.querySelector(".model-catalog-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -6678,16 +6715,12 @@ function saveProviderSettings(button) {
   return runAction(button, async () => {
     const card = button.closest(".provider-editor-card");
     const response = await saveProviderSettingsFromCard(card);
-    render();
     showToast(providerSaveRepairToast(response?.sync));
   });
 }
 
 async function saveProviderSettingsFromCard(card) {
-  const response = await api.saveProvider(providerSettingsPayload(card));
-  state = response?.state || await api.getState();
-  draftSelection = [...state.selectedModelIds];
-  return response;
+  return api.saveProvider(providerSettingsPayload(card));
 }
 
 function resetProviderSettings(button) {
@@ -7121,15 +7154,24 @@ function bindModelConfigControls(target) {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       runAction(button, async () => {
-        const model = modelMap().get(button.dataset.imageInputToggle);
+        const startedAt = performance.now();
+        const presetId = button.dataset.imageInputToggle;
+        const model = modelMap().get(presetId);
         const next = !modelSupportsImage(model);
-        state = await api.saveModelImageInput({
-          presetId: button.dataset.imageInputToggle,
+        const response = await api.saveModelImageInput({
+          presetId,
           imageInput: next,
         });
-        draftSelection = [...state.selectedModelIds];
-        render();
-        showToast(next ? "图片上传已开启。" : "图片上传已关闭。");
+        const saved = response?.saved?.imageInput ?? next;
+        updateModelImageInputState(presetId, saved);
+        updateModelImageInputToggle(button, saved);
+        console.info("[image-input-toggle]", {
+          presetId,
+          ipcMs: Math.round(performance.now() - startedAt),
+          transactionMs: response?.timingMs,
+          timing: response?.timing,
+        });
+        showToast(saved ? "图片上传已开启。" : "图片上传已关闭。");
       });
     });
   });
@@ -8507,6 +8549,27 @@ function apiLabelShort(value) {
 
 function modelSupportsImage(model) {
   return Array.isArray(model?.inputModalities) && model.inputModalities.includes("image");
+}
+
+function updateModelImageInputState(presetId, enabled) {
+  const id = String(presetId || "");
+  const models = Array.isArray(state?.modelPresets) ? state.modelPresets : [];
+  const model = models.find((item) => item?.presetId === id);
+  if (!model) {
+    return;
+  }
+  model.inputModalities = enabled ? ["text", "image"] : ["text"];
+  state.modelImageInput = { ...(state.modelImageInput || {}), [id]: Boolean(enabled) };
+}
+
+function updateModelImageInputToggle(button, enabled) {
+  button.classList.toggle("enabled", Boolean(enabled));
+  button.setAttribute("aria-pressed", enabled ? "true" : "false");
+  button.title = enabled ? "点击关闭图片上传" : "点击开启图片上传";
+  const status = button.querySelector("strong");
+  if (status) {
+    status.textContent = enabled ? "开" : "关";
+  }
 }
 
 function inputModalitiesForModel(model) {
