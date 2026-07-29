@@ -3,7 +3,7 @@ const START_RE =
 const UPSTREAM_RE =
   /\[(?<iso>\d{4}-\d\d-\d\dT[^\]]+)] (?<requestId>req_[a-z0-9]+) -> upstream route=(?<route>\S+) api=(?<api>\S+) upstream_model=(?<upstreamModel>\S+) url=(?<url>\S+)/i;
 const USAGE_RE =
-  /\[(?<iso>\d{4}-\d\d-\d\dT[^\]]+)] (?<requestId>req_[a-z0-9]+) <- upstream route=(?<route>\S+) usage prompt=(?<promptTokens>\d+)(?: cached=(?<cacheReadTokens>\d+) fresh=(?<freshPromptTokens>\d+))?(?: cache_write=(?<cacheCreationTokens>\d+))? completion=(?<completionTokens>\d+) total=(?<totalTokens>\d+)/i;
+  /\[(?<iso>\d{4}-\d\d-\d\dT[^\]]+)] (?<requestId>req_[a-z0-9]+) <- upstream route=(?<route>\S+) usage prompt=(?<promptTokens>\d+)(?: cached=(?<cacheReadTokens>\d+) fresh=(?<freshPromptTokens>\d+))?(?: cache_write=(?<cacheCreationTokens>\d+))? completion=(?<completionTokens>\d+) total=(?<totalTokens>\d+)(?: ttft=(?<ttftMs>\d+))?/i;
 const NO_USAGE_RE =
   /\[(?<iso>\d{4}-\d\d-\d\dT[^\]]+)] (?<requestId>req_[a-z0-9]+) <- upstream route=(?<route>\S+) usage=\(none\)/i;
 const STATUS_RE =
@@ -95,6 +95,7 @@ export function createUsageStore({ maxEvents = 800, initialEvents = [] } = {}) {
       );
       item.completionTokens = Number(usage.completionTokens || 0);
       item.totalTokens = Number(usage.totalTokens || 0);
+      if (usage.ttftMs != null) { item.ttftMs = Number(usage.ttftMs); }
       finalize(item);
       return;
     }
@@ -734,6 +735,7 @@ function normalizeEvent(event) {
     completionTokens: Number(event.completionTokens || 0),
     totalTokens: Number(event.totalTokens || 0),
     durationMs: Number.isFinite(Number(event.durationMs)) ? Number(event.durationMs) : null,
+    ttftMs: Number.isFinite(Number(event.ttftMs)) ? Number(event.ttftMs) : null,
     error: String(event.error || ""),
     errorType: String(event.errorType || ""),
     errorCause: String(event.errorCause || ""),

@@ -1460,6 +1460,8 @@ export async function proxyResponsesApi(
   const terminalBuffer = createTextBuffer();
   let terminalStarted = false;
   let streamError = null;
+  let ttftMs = null;
+  const streamStartMs = Date.now();
   try {
     for await (const chunk of upstream.body) {
       const blocks = takeCompleteSseBlocks(pendingEvent, Buffer.from(chunk));
@@ -1470,6 +1472,7 @@ export async function proxyResponsesApi(
           continue;
         }
         diagnosticTail = appendDiagnosticTail(diagnosticTail, block);
+        if (ttftMs === null) { ttftMs = Date.now() - streamStartMs; }
         res.write(block);
       }
     }
@@ -1492,7 +1495,7 @@ export async function proxyResponsesApi(
     extractResponsesUsage(`${diagnosticTail}${terminalText}`);
   if (streamError) {
     if (isClientClosedStreamWrite(context, res, streamError)) {
-      logUsage(context, route, usage);
+      logUsage(context, route, usage, ttftMs);
       throw new ClientClosedRequestError();
     }
     if (streamError instanceof UpstreamTimeoutError) {
@@ -1503,7 +1506,7 @@ export async function proxyResponsesApi(
         }));
         res.end();
       }
-      logUsage(context, route, usage);
+      logUsage(context, route, usage, ttftMs);
       throw streamError;
     }
     if (streamError?.localHistoryError) {
@@ -1516,7 +1519,7 @@ export async function proxyResponsesApi(
         }));
         res.end();
       }
-      logUsage(context, route, usage);
+      logUsage(context, route, usage, ttftMs);
       throw localError;
     }
     if (!upstreamPayload.stream) {
@@ -1533,7 +1536,7 @@ export async function proxyResponsesApi(
       }));
       res.end();
     }
-    logUsage(context, route, usage);
+    logUsage(context, route, usage, ttftMs);
     throw new UpstreamStreamError(message, activeUpstreamUrl, route, "upstream_stream_error");
   }
   if (!terminalStarted || !responsesSseStreamComplete(terminalText)) {
@@ -1548,14 +1551,14 @@ export async function proxyResponsesApi(
       model: requestBody.model || route.id || route.model || null,
     }));
     res.end();
-    logUsage(context, route, usage);
+    logUsage(context, route, usage, ttftMs);
     throw new UpstreamStreamError(message, activeUpstreamUrl, route, "upstream_stream_truncated");
   }
 
   const terminalKind = responsesTerminalKind(terminalText);
   if (isPassThroughNonSuccessTerminal(terminalKind, completedResponse)) {
     res.end(terminalText);
-    logUsage(context, route, usage);
+    logUsage(context, route, usage, ttftMs);
     return;
   }
   if (!isCompletedResponsesObject(completedResponse)) {
@@ -1568,7 +1571,7 @@ export async function proxyResponsesApi(
         model: requestBody.model || route.id || route.model || null,
       }));
     }
-    logUsage(context, route, usage);
+    logUsage(context, route, usage, ttftMs);
     throw new UpstreamStreamError(
       message,
       activeUpstreamUrl,
@@ -1591,10 +1594,10 @@ export async function proxyResponsesApi(
         model: requestBody.model || route.id || route.model || null,
       }));
     }
-    logUsage(context, route, usage);
+    logUsage(context, route, usage, ttftMs);
     throw localError;
   }
-  logUsage(context, route, usage);
+  logUsage(context, route, usage, ttftMs);
   res.end(terminalText);
 }
 
@@ -5084,7 +5087,7 @@ function logStatus(context, route, status) {
   );
 }
 
-function logUsage(context, route, usage) {
+function logUsage(context, route, usage, ttftMs) {
   const requestId = context.requestId || "req";
   if (!usage) {
     notifyUpstreamUsage(context, route, null);
@@ -5106,7 +5109,8 @@ function logUsage(context, route, usage) {
     `[${new Date().toISOString()}] ${requestId} <- upstream ` +
       `route=${route.id} usage prompt=${normalized.prompt_tokens} ` +
       `cached=${normalized.cache_read_tokens} fresh=${normalized.fresh_prompt_tokens} ` +
-      `completion=${normalized.completion_tokens} total=${normalized.total_tokens}`,
+      `completion=${normalized.completion_tokens} total=${normalized.total_tokens}` +
+      (Number.isFinite(ttftMs) ? ` ttft=${Math.round(ttftMs)}` : ""),
   );
 }
 

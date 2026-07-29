@@ -9482,9 +9482,10 @@ function renderUsageTableStable(rows, events, history = {}) {
               <span>${escapeHtml(displayRoute(event.route))}</span>
               <span>${escapeHtml(event.upstreamModel || "-")}</span>
               <span>${escapeHtml(event.api || "-")}</span>
-              <span class="usage-status-cell">
+              <span class="usage-status-cell" title="${escapeHtml(usageRequestSourceLabel(event))}">
                 <button class="mini-link" type="button" data-request-detail="${escapeHtml(event.requestId || event.id || index)}">详情</button>
-                ${escapeHtml(usageEventStatusText(event))} · ${escapeHtml(usageRequestSourceLabel(event))}
+                <span class="usage-status-code">${escapeHtml(usageEventStatusText(event))}</span>
+                <span class="usage-source-label">${escapeHtml(usageRequestSourceLabel(event))}</span>
               </span>
               <span>${formatInputTokens(event)}</span>
               <span>${formatCacheTokens(event)}</span>
@@ -9555,6 +9556,7 @@ function showRequestDetail(event) {
     ["上游 URL", upstreamUrl || "-"],
     ["状态", usageEventStatusText(event)],
     ["耗时", formatDuration(event.durationMs)],
+    ...(Number.isFinite(event.ttftMs) ? [["首字时间", formatDuration(event.ttftMs)]] : []),
     ["Token", `${formatNumber(event.totalTokens)} 总 / ${formatNumber(event.promptTokens || 0)} 输入 / ${formatNumber(event.completionTokens || 0)} 输出`],
     ["开始时间", formatTime(event.startedAt)],
     ["结束时间", formatTime(event.finishedAt)],
