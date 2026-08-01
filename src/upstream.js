@@ -5360,13 +5360,14 @@ async function fetchUpstream(upstreamUrl, init, context = {}, route = {}, option
     }
   }
 
-  if (response && [502, 503, 504].includes(response.status) && !options._is50xRetry) {
+  if (response && [502, 503, 504, 524].includes(response.status) && !options._is50xRetry) {
+    const retryDelayMs = 1500 + Math.floor(Math.random() * 2000);
     console.warn(
       `[${new Date().toISOString()}] ${context.requestId || "req"} ` +
-        `!! upstream route=${route.id || "-"} status=${response.status}; retrying in 500ms...`,
+        `!! upstream route=${route.id || "-"} status=${response.status}; retrying in ${retryDelayMs}ms...`,
     );
     await cancelUpstreamResponse(response);
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     try {
       const retryResponse = await fetchAndTrackRateLimit(
         upstreamUrl,

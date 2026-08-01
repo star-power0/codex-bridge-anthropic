@@ -2,6 +2,39 @@
 
 本文件只记录本 fork 相对上游 `wangzhezbz/codex-bridge` 0.3.13 发行版的改动，不包含上游自身的历史变更（见上游仓库）。
 
+## 2026-08-01
+
+### Fixed
+- 将 Cloudflare 常见的 HTTP `524` 纳入上游临时错误重试范围。
+- 将 `502` / `503` / `504` / `524` 的单次重试等待从固定 `500ms` 改为 `1500–3500ms` 随机退避，减少短时间内重复撞击同一网关故障窗口。
+
+### Unchanged
+- 不改变最近四条含图片消息的历史保留策略。
+- 不改变 Claude 的 `anthropic_messages` 原生协议路由。
+- 不改变模型、供应商、图片压缩和请求格式配置。
+
+### Verification
+- `node --check src/upstream.js` 通过。
+- 详细备份与修改前后文件位于 `E:\CodexBridge\patches\2026-08-01-minimal-upstream-retry\`。
+
+## 2026-07-31（续）
+
+### Changed
+- 调整 Codex Dream Skin 预设 `abyssal-cyan-reverie`（深渊青梦）：正文 `text` 从冷白降到柔和青白，`muted` 提亮以改善右上角窗口控制和次级图标可见性。
+- 加深本预设 `main` / `header` / `sidebar` / `composer` / `dialog` 的 Safe CSS 半透明表面，降低普通任务页和设置页背景杂感，避免文字与壁纸高频细节互相干扰。
+
+### Verified
+- `check_contrast.py` 全部必需对比度通过，`validate-safe-css-file.mjs` 返回 `status: validated`。
+
+## 2026-07-31
+
+### Added
+- 新增 Codex Dream Skin 预设 `abyssal-cyan-reverie`（深渊青梦）：基于暗青蓝人物宽图，采用左侧安全区、右侧焦点构图与 `taskMode: full`，主题文件落地到 `%LOCALAPPDATA%\\CodexDreamSkin\\themes\\preset-abyssal-cyan-reverie`。
+- 配色使用壁纸实测的深青蓝环境色、主体青 cyan 高光与冷白正文色；Safe CSS 仅在本预设内调 sidebar/header/composer/dialog 透明度和阴影，不改共享运行时。
+
+### Verified
+- `check_contrast.py` 全部必需对比度通过，`validate-safe-css-file.mjs` 返回 `status: validated`，并确认 `theme.json`、`theme.css`、`background.png` 三个主题文件均存在。
+
 ## 2026-07-29
 
 ### Performance
